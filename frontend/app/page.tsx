@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import toast from "react-hot-toast";
 import { translateStream, ApiError, Direction } from "@/lib/api";
@@ -22,7 +22,7 @@ const DIRECTIONS: { value: Direction; label: string; from: string; to: string }[
 
 const PLACEHOLDERS: Record<Direction, string> = {
   pm2rd: "在此粘贴产品需求描述...\n\n例如：我们需要一个智能推荐功能，根据用户的历史行为，在首页展示个性化内容，提升用户留存率。",
-  rd2pm: "在此粘贴技术描述...\n\n例如：基于协同过滤算法实现推荐系统，采用 Redis 缓存热点数据，通过 Kafka 异步处理用户行为事件，P95 延迟控制在 100ms 内。",
+  rd2pm: "在此粘贴技术描述...\n\n例如：基于协同过滤算法实现推荐系统，采用 Redis 缓存热点数据，通过 Kafka 异步处理用户行为事件，P95 延迟控制在 100ms 内。等",
 };
 
 export default function HomePage() {
@@ -33,6 +33,15 @@ export default function HomePage() {
   const [copied, setCopied] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Ref for auto-scroll to bottom during streaming
+  const outputRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll output panel to bottom whenever new chunks arrive
+  useEffect(() => {
+    if (streaming && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [output, streaming]);
 
   const currentDir = DIRECTIONS.find((d) => d.value === direction)!;
 
@@ -56,6 +65,7 @@ export default function HomePage() {
         input,
         direction,
         (chunk) => {
+          console.log('[page] chunk received, length:', chunk.length, 'preview:', chunk.substring(0, 20));
           setOutput((prev) => prev + chunk);
         },
         () => {
@@ -131,8 +141,8 @@ export default function HomePage() {
                 key={d.value}
                 onClick={() => { setDirection(d.value); setOutput(""); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${direction === d.value
-                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
                   }`}
               >
                 {d.value === "pm2rd" ? <Briefcase size={14} /> : <Code2 size={14} />}
@@ -160,8 +170,8 @@ export default function HomePage() {
           </span>
         </div>
 
-        {/* Dual-panel layout */}
-        <div className="grid grid-cols-2 gap-6 min-h-[calc(100vh-220px)]">
+        {/* Dual-panel layout — fixed height, internal scroll */}
+        <div className="grid grid-cols-2 gap-6 h-[calc(100vh-220px)]">
           {/* Left panel — Input */}
           <div
             className="rounded-2xl border flex flex-col overflow-hidden transition-all duration-300"
@@ -258,7 +268,7 @@ export default function HomePage() {
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
+            <div ref={outputRef} className="flex-1 overflow-y-auto p-5">
               {!output && !loading && (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-3">
                   <div className="w-16 h-16 rounded-2xl bg-white/3 border border-white/5 flex items-center justify-center">
@@ -279,8 +289,36 @@ export default function HomePage() {
               )}
 
               {output && (
-                <article className="markdown-body prose prose-sm max-w-none">
-                  <ReactMarkdown>{output}</ReactMarkdown>
+                <article className="markdown-body">
+                  <ReactMarkdown
+                    components={{
+                      // Tables
+                      table: ({ children }) => (
+                        <div style={{ overflowX: "auto", marginBottom: "1rem" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+                        </div>
+                      ),
+                      th: ({ children }) => (
+                        <th style={{ padding: "0.5rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.1)", textAlign: "left", color: "#e2e8f0", fontWeight: 600 }}>{children}</th>
+                      ),
+                      td: ({ children }) => (
+                        <td style={{ padding: "0.5rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "#94a3b8" }}>{children}</td>
+                      ),
+                      // Code
+                      code: ({ className, children, ...props }) => {
+                        const isBlock = className?.includes("language-");
+                        return isBlock ? (
+                          <pre style={{ background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "8px", padding: "1rem", overflowX: "auto", marginBottom: "1rem" }}>
+                            <code style={{ color: "#a5f3fc", fontFamily: "monospace", fontSize: "0.85em" }} {...props}>{children}</code>
+                          </pre>
+                        ) : (
+                          <code style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8", padding: "0.15rem 0.4rem", borderRadius: "4px", fontSize: "0.85em", fontFamily: "monospace" }} {...props}>{children}</code>
+                        );
+                      },
+                    }}
+                  >
+                    {output}
+                  </ReactMarkdown>
                   {streaming && (
                     <span className="inline-block w-0.5 h-4 bg-indigo-400 animate-pulse ml-0.5 align-middle" />
                   )}

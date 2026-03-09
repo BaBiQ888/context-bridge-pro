@@ -73,34 +73,66 @@ export async function translateStream(
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
+    console.log('[SSE] decoded value, buffer length:', buffer.length);
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
 
+    // Track whether the previous processed line was a data: line.
+    // SSE spec: consecutive data: lines within the same event are separated by \n.
+    let prevLineWasData = false;
+
     for (const line of lines) {
-      if (line.startsWith("event: chunk")) continue;
-      if (line.startsWith("event: done")) {
-        onDone();
-        return;
+      if (line === "") {
+        // Blank line = SSE event separator. Reset data-line tracking.
+        prevLineWasData = false;
+        continue;
       }
-      if (line.startsWith("event: error")) continue;
 
-      if (line.startsWith("data: ")) {
-        const raw = line.slice(6).trim();
-        if (!raw) continue;
+      // ── Event name line: "event:chunk" / "event:done" / "event:error" ──
+      if (line.startsWith("event:")) {
+        prevLineWasData = false;
+        const eventName = line.slice(6).trim();
+        if (eventName === "done") {
+          onDone();
+          return;
+        }
+        continue; // chunk / error are just markers
+      }
 
-        // Error event payload is JSON
+      // ── Data line: "data:<content>" ──
+      if (line.startsWith("data:")) {
+        const raw = line.slice(5); // "data:" = 5 chars
+
+        // SSE spec: consecutive data: lines in the same event are joined with \n.
+        // Emit \n BEFORE this data value if a previous data line already ran.
+        if (prevLineWasData) {
+          onChunk("\n");
+        }
+        prevLineWasData = true;
+
+        if (raw === "") {
+          // Empty data line → contributes just a \n (already emitted above).
+          // Nothing more to emit for this line.
+          continue;
+        }
+
+        // Try JSON parse for done/error object payloads: {"direction":"..."} / {"code":"..."}
         try {
-          const parsed = JSON.parse(raw) as { code?: string; message?: string; direction?: string };
-          if (parsed.code && parsed.message) {
-            onError(parsed.code, parsed.message);
-            return;
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.code && parsed.message) {
+              onError(parsed.code as string, parsed.message as string);
+              return;
+            }
+            if (parsed.direction) {
+              onDone();
+              return;
+            }
           }
-          if (parsed.direction) {
-            onDone();
-            return;
-          }
+          // Parsed as non-object (e.g. a JSON string) → treat as text chunk
+          onChunk(typeof parsed === "string" ? parsed : raw);
         } catch {
-          // Plain text chunk
+          // Not JSON → raw text chunk from LLM stream
           onChunk(raw);
         }
       }

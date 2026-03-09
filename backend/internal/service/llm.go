@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"strings"
 
@@ -104,12 +106,16 @@ func (s *LLMService) TranslateStream(ctx context.Context, content, direction str
 		response, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				return nil // client disconnected, graceful stop
-			}
-			// io.EOF signals natural end of stream
-			if err.Error() == "EOF" {
+				log.Println("[llm] stream: client disconnected")
 				return nil
 			}
+			// io.EOF / io.ErrUnexpectedEOF both signal natural end of stream
+			// (non-OpenAI providers like ZhipuAI may wrap the error)
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Println("[llm] stream: finished (EOF)")
+				return nil
+			}
+			log.Printf("[llm] stream: recv error type=%T msg=%s", err, err.Error())
 			return classifyOpenAIError(err)
 		}
 
